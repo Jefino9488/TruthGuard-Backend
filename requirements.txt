@@ -1,0 +1,9 @@
+Flask
+pymongo
+python-dotenv
+newsapi-python
+newspaper3k
+sentence-transformers
+google-generativeai
+pydantic
+gunicorn # For production deployment

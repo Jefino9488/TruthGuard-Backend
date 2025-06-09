@@ -1,0 +1,5 @@
+/.env
+/.env.local
+/digest.txt
+/.venv/
+/.idea
