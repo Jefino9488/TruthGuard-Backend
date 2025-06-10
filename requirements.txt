@@ -1,9 +1,11 @@
-Flask
-pymongo
-python-dotenv
+Flask~=3.1.1
+pymongo~=4.13.0
+python-dotenv~=1.1.0
 newsapi-python
-newspaper3k
-sentence-transformers
+newspaper3k~=0.2.8
+sentence-transformers~=4.1.0
 google-generativeai
-pydantic
-gunicorn # For production deployment
+pydantic~=2.11.5
+gunicorn
+numpy~=2.3.0
+protobuf~=5.29.5

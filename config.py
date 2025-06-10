@@ -1,16 +1,12 @@
-# flask_backend/config.py
-
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env.local
 load_dotenv('.env')
 
 class Config:
-    """Base configuration."""
-    SECRET_KEY = os.getenv('SECRET_KEY', 'a_very_secret_key_for_dev') # Replace with a strong secret key in production
+    SECRET_KEY = os.getenv('SECRET_KEY', 'a_very_secret_key_for_dev')
     MONGO_URI = os.getenv('MONGODB_URI')
-    NEWS_API_KEY = os.getenv('NEWS_API_KEY_SCRAPER') # Renamed from NEWS_API_KEY for clarity
+    NEWS_API_KEY = os.getenv('NEWS_API_KEY_SCRAPER')
     GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
     FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
@@ -25,14 +21,11 @@ class Config:
         raise ValueError("No GOOGLE_API_KEY provided. Set GOOGLE_API_KEY env variable.")
 
 class DevelopmentConfig(Config):
-    """Development configuration."""
     DEBUG = True
 
 class ProductionConfig(Config):
-    """Production configuration."""
     DEBUG = False
     FLASK_ENV = 'production'
-    # Add any production-specific settings here
 
 def get_config():
     env = os.getenv('FLASK_ENV', 'development')
