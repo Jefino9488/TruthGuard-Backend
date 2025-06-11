@@ -523,7 +523,7 @@ class GeminiAnalyzerTask:
 
         unprocessed = list(self.collection.find({
             'processing_status': {'$in': ['pending', 'analyzed_fallback', None]}
-        }).limit(batch_size))
+        })) # Removed .limit(batch_size)
 
         if not unprocessed:
             logger.info("No unprocessed articles found to analyze.")
