@@ -1,4 +1,3 @@
-import os
 import json
 import logging
 import sys
@@ -12,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from sentence_transformers import SentenceTransformer
 import numpy as np
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, ConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,8 @@ class FactCheck(BaseModel):
     verdict: str
     confidence: float = Field(ge=0.0, le=1.0)
     explanation: str
-    sources: list[str] = Field(default_factory=list) # Added sources
+    sources: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
 
 class BiasAnalysis(BaseModel):
     overall_score: float = Field(ge=0.0, le=1.0)
@@ -31,36 +31,46 @@ class BiasAnalysis(BaseModel):
     language_bias: float = Field(ge=0.0, le=1.0)
     source_bias: float = Field(ge=0.0, le=1.0)
     framing_bias: float = Field(ge=0.0, le=1.0)
-    selection_bias: float = Field(ge=0.0, le=1.0) # Added selection_bias
-    confirmation_bias: float = Field(ge=0.0, le=1.0) # Added confirmation_bias
+    selection_bias: float = Field(ge=0.0, le=1.0)
+    confirmation_bias: float = Field(ge=0.0, le=1.0)
+    model_config = ConfigDict(extra="forbid")
 
 class MisinformationAnalysis(BaseModel):
     risk_score: float = Field(ge=0.0, le=1.0)
     fact_checks: list[FactCheck] = Field(default_factory=list)
     red_flags: list[str] = Field(default_factory=list)
-    logical_fallacies: list[str] = Field(default_factory=list) # Added
-    evidence_quality: float = Field(ge=0.0, le=1.0) # Added
+    logical_fallacies: list[str] = Field(default_factory=list)
+    evidence_quality: float = Field(ge=0.0, le=1.0)
+    model_config = ConfigDict(extra="forbid")
 
 class SentimentAnalysis(BaseModel):
     overall_sentiment: float = Field(ge=-1.0, le=1.0)
     emotional_tone: str
     key_phrases: list[str] = Field(default_factory=list)
-    emotional_manipulation: float = Field(ge=0.0, le=1.0) # Added
-    subjectivity_score: float = Field(ge=0.0, le=1.0) # Added
+    emotional_manipulation: float = Field(ge=0.0, le=1.0)
+    subjectivity_score: float = Field(ge=0.0, le=1.0)
+    model_config = ConfigDict(extra="forbid")
 
 class CredibilityAssessment(BaseModel):
     overall_score: float = Field(ge=0.0, le=1.0)
     evidence_quality: float = Field(ge=0.0, le=1.0)
     source_reliability: float = Field(ge=0.0, le=1.0)
-    logical_consistency: float = Field(ge=0.0, le=1.0) # Added
-    transparency: float = Field(ge=0.0, le=1.0) # Added
+    logical_consistency: float = Field(ge=0.0, le=1.0)
+    transparency: float = Field(ge=0.0, le=1.0)
+    model_config = ConfigDict(extra="forbid")
+
+class ActorPortrayal(BaseModel):
+    main_actor: str | None = None
+    tone: str | None = None
+    role: str | None = None
 
 class NarrativeAnalysis(BaseModel):
     primary_frame: str
     secondary_frames: list[str] = Field(default_factory=list)
     narrative_patterns: list[str] = Field(default_factory=list)
-    actor_portrayal: dict = Field(default_factory=dict)
-    perspective_diversity: float = Field(ge=0.0, le=1.0) # Added
+    actor_portrayal: ActorPortrayal = Field(default_factory=ActorPortrayal)
+    perspective_diversity: float = Field(ge=0.0, le=1.0)
+    model_config = ConfigDict(extra="forbid")
 
 class TechnicalAnalysis(BaseModel):
     readability_score: float = Field(ge=0.0, le=1.0)
@@ -68,12 +78,14 @@ class TechnicalAnalysis(BaseModel):
     word_count: int
     key_topics: list[str] = Field(default_factory=list)
     named_entities: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
 
 class Recommendations(BaseModel):
     verification_needed: list[str] = Field(default_factory=list)
     alternative_sources: list[str] = Field(default_factory=list)
     critical_questions: list[str] = Field(default_factory=list)
     bias_mitigation: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
 
 class AnalysisResponse(BaseModel):
     bias_analysis: BiasAnalysis
@@ -84,7 +96,27 @@ class AnalysisResponse(BaseModel):
     technical_analysis: TechnicalAnalysis
     recommendations: Recommendations
     confidence: float = Field(ge=0.0, le=1.0)
-    model_version: str = Field(default="gemini-2.0-flash-001") # Added model_version
+    model_version: str = Field(default="gemini-2.0-flash-001")
+    model_config = ConfigDict(extra="forbid")
+
+def clean_json_schema(schema: dict) -> dict:
+    """Recursively remove 'additionalProperties' from a JSON schema."""
+    if not isinstance(schema, dict):
+        return schema
+
+    cleaned = {}
+    for key, value in schema.items():
+        if key == "additionalProperties":
+            continue  # Skip this key entirely
+        elif isinstance(value, dict):
+            cleaned[key] = clean_json_schema(value)
+        elif isinstance(value, list):
+            cleaned[key] = [clean_json_schema(item) for item in value]
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 
 class GeminiAnalyzerTask:
     def __init__(self, db_client, google_api_key, model_path='all-MiniLM-L6-v2'):
@@ -140,12 +172,14 @@ class GeminiAnalyzerTask:
         Article Content: {content_to_send}
 
         Your JSON response must adhere to the following schema:
-        {AnalysisResponse.model_json_schema()}
+        {json.dumps(clean_json_schema(AnalysisResponse.model_json_schema()))}
         """
 
     def analyze_article_comprehensive(self, article, max_retries=3):
         """Comprehensive analysis using Gemini AI with retry logic."""
         prompt = self._prepare_gemini_prompt(article['title'], article['content'])
+        raw_schema = AnalysisResponse.model_json_schema()
+        cleaned_schema = clean_json_schema(raw_schema)
 
         for attempt in range(max_retries):
             try:
@@ -154,9 +188,9 @@ class GeminiAnalyzerTask:
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type='application/json',
-                        response_schema=AnalysisResponse.model_json_schema(),
+                        response_schema=cleaned_schema,
                         temperature=0.3,
-                        max_output_tokens=3000 # Increased output tokens for comprehensive analysis
+                        max_output_tokens=3000
                     )
                 )
 
@@ -177,7 +211,7 @@ class GeminiAnalyzerTask:
                         'credibility_score': analysis_dict['credibility_assessment']['overall_score'],
                         'processing_status': 'analyzed',
                         'analyzed_at': datetime.now(timezone.utc),
-                        'analysis_model': self.model_name # This is redundant with model_version in ai_analysis, can choose one
+                        'analysis_model': self.model_name
                     }
 
                     # Generate and update embeddings
@@ -226,9 +260,8 @@ class GeminiAnalyzerTask:
                     self.stats['processing_errors'] += 1
                     return self.generate_fallback_analysis(article)
 
-
             except errors.APIError as e:
-                if e.status_code in [429, 503]:
+                if hasattr(e, 'response') and e.response.status_code in [429, 503]:
                     wait_time = 5 * (2 ** attempt) + random.uniform(0, 1)
                     logger.warning(f"Retrying article {article['_id']} after {wait_time:.2f}s due to {e.status_code} error: {e.message}")
                     time.sleep(wait_time)
@@ -247,11 +280,10 @@ class GeminiAnalyzerTask:
         return None
 
     def analyze_raw_content(self, title: str, content: str, max_retries=3):
-        """
-        Analyzes raw text content (not from MongoDB) using Gemini AI.
-        Returns the analysis dictionary including embeddings for the frontend.
-        """
+        """Analyzes raw text content (not from MongoDB) using Gemini AI."""
         prompt = self._prepare_gemini_prompt(title, content)
+        raw_schema = AnalysisResponse.model_json_schema()
+        cleaned_schema = clean_json_schema(raw_schema)
 
         for attempt in range(max_retries):
             try:
@@ -260,12 +292,11 @@ class GeminiAnalyzerTask:
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type='application/json',
-                        response_schema=AnalysisResponse.model_json_schema(),
+                        response_schema=cleaned_schema,  # Use cleaned schema
                         temperature=0.3,
                         max_output_tokens=3000
                     )
                 )
-
                 try:
                     analysis_data = json.loads(response.text)
                     analysis = AnalysisResponse(**analysis_data)
@@ -295,7 +326,7 @@ class GeminiAnalyzerTask:
                     return self._generate_fallback_raw_analysis(title, content)
 
             except errors.APIError as e:
-                if e.status_code in [429, 503]:
+                if hasattr(e, 'response') and e.response.status_code in [429, 503]:
                     wait_time = 5 * (2 ** attempt) + random.uniform(0, 1)
                     logger.warning(f"Retrying raw content analysis after {wait_time:.2f}s due to {e.status_code} error: {e.message}")
                     time.sleep(wait_time)
@@ -325,7 +356,7 @@ class GeminiAnalyzerTask:
         bias_score_val = 0.5
         political_leaning_val = 'center'
         if left_score_count > right_score_count:
-            bias_score_val = min(left_score_count * 0.1 + 0.3, 1.0) # Boost score based on keyword count
+            bias_score_val = min(left_score_count * 0.1 + 0.3, 1.0)
             political_leaning_val = 'left-leaning'
         elif right_score_count > left_score_count:
             bias_score_val = min(right_score_count * 0.1 + 0.3, 1.0)
@@ -386,7 +417,7 @@ class GeminiAnalyzerTask:
                 'critical_questions': [],
                 'bias_mitigation': []
             },
-            'confidence': 0.2, # Low confidence for fallback
+            'confidence': 0.2,
             'model_version': 'fallback-local-ai-v1.0',
             'content_embedding': dummy_embedding,
             'title_embedding': dummy_embedding,
@@ -501,7 +532,7 @@ class GeminiAnalyzerTask:
         logger.info(f"Found {len(unprocessed)} articles to analyze")
 
         # Use ThreadPoolExecutor for concurrent API calls
-        with ThreadPoolExecutor(max_workers=2) as executor: # Keep low to respect API rate limits
+        with ThreadPoolExecutor(max_workers=2) as executor:
             future_to_article = {
                 executor.submit(self.analyze_article_comprehensive, article): article
                 for article in unprocessed
@@ -510,8 +541,8 @@ class GeminiAnalyzerTask:
             for future in as_completed(future_to_article):
                 article = future_to_article[future]
                 try:
-                    _ = future.result() # We don't need the direct analysis dict here, just ensure it ran
-                    time.sleep(5) # Add a delay between processing each article's result to mitigate rate limiting
+                    _ = future.result()
+                    time.sleep(5)
                 except Exception as e:
                     logger.error(f"Analysis failed for {article['_id']}: {e}")
 
