@@ -292,7 +292,7 @@ class GeminiAnalyzerTask:
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type='application/json',
-                        response_schema=cleaned_schema,  # Use cleaned schema
+                        response_schema=cleaned_schema,
                         temperature=0.3,
                         max_output_tokens=3000
                     )
@@ -325,20 +325,36 @@ class GeminiAnalyzerTask:
                     logger.error(f"Attribute error in Gemini response for raw content: {e}. Response text structure might be unexpected: {response.text}")
                     return self._generate_fallback_raw_analysis(title, content)
 
+            except errors.ServerError as e:
+                # Handle ServerError specifically
+                error_code = getattr(e, 'code', 503)  # Default to 503 if code not found
+                error_message = str(e)
+                wait_time = 5 * (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(f"Retrying raw content analysis after {wait_time:.2f}s due to {error_code} error: {error_message}")
+                time.sleep(wait_time)
+                if attempt == max_retries - 1:
+                    logger.error(f"Max retries reached for raw content analysis: {error_code} - {error_message}")
+                    return self._generate_fallback_raw_analysis(title, content)
+
             except errors.APIError as e:
-                if hasattr(e, 'response') and e.response.status_code in [429, 503]:
+                # Handle other API errors
+                error_code = e.response.status_code if hasattr(e, 'response') else 500
+                error_message = str(e)
+                if error_code in [429, 503]:
                     wait_time = 5 * (2 ** attempt) + random.uniform(0, 1)
-                    logger.warning(f"Retrying raw content analysis after {wait_time:.2f}s due to {e.status_code} error: {e.message}")
+                    logger.warning(f"Retrying raw content analysis after {wait_time:.2f}s due to {error_code} error: {error_message}")
                     time.sleep(wait_time)
                     if attempt == max_retries - 1:
-                        logger.error(f"Max retries reached for raw content analysis: {e.status_code} - {e.message}")
+                        logger.error(f"Max retries reached for raw content analysis: {error_code} - {error_message}")
                         return self._generate_fallback_raw_analysis(title, content)
                 else:
-                    logger.error(f"Gemini API error for raw content analysis: {e.status_code} - {e.message}")
+                    logger.error(f"Gemini API error for raw content analysis: {error_code} - {error_message}")
                     return self._generate_fallback_raw_analysis(title, content)
+
             except Exception as e:
                 logger.error(f"Unexpected error analyzing raw content: {e}", exc_info=True)
                 return self._generate_fallback_raw_analysis(title, content)
+
         return None
 
     def _generate_fallback_raw_analysis(self, title: str, content: str):
