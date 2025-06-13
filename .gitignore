@@ -3,3 +3,4 @@
 /digest.txt
 /.venv/
 /.idea
+/.env.backend
