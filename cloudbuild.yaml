@@ -22,7 +22,13 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'MONGODB_URI=${_MONGODB_URI},NEWS_API_KEY_SCRAPER=${_NEWS_API_KEY_SCRAPER},GOOGLE_API_KEY=${_GOOGLE_API_KEY}'
+      - 'MONGODB_URI=${_MONGODB_URI}'
+      - '--set-env-vars'
+      - 'NEWS_API_KEY_SCRAPER=${_NEWS_API_KEY_SCRAPER}'
+      - '--set-env-vars'
+      - 'GOOGLE_API_KEY=${_GOOGLE_API_KEY}'
+      - '--set-env-vars'
+      - 'FLASK_ENV=production'
 
 images:
   - 'gcr.io/$PROJECT_ID/truthguard-backend'
