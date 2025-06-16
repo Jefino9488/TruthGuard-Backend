@@ -1,25 +1,31 @@
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, current_app
-from app.tasks import NewsAPIFetcherTask, GeminiAnalyzerTask
-from app.services import ArticleService
-from app import db
 import threading
 import hashlib
 from newspaper import Article
-from pymongo.errors import PyMongoError # Import for MongoDB specific errors
+from urllib.parse import urlparse
+from pymongo.errors import PyMongoError
 
+# Initialize the blueprint
 main_bp = Blueprint('main', __name__)
 
-# Re-initialize the ArticleService here since it's used by multiple routes
-article_service = ArticleService(db)
+# Initialize dependencies after app context is created
+def init_route_dependencies(app):
+    global article_service
+    from app import db
+    from app.tasks import NewsAPIFetcherTask, GeminiAnalyzerTask
+    from app.services import ArticleService
+    article_service = ArticleService(db)
+
+# Rest of the code will be initialized when init_route_dependencies is called
+article_service = None
 
 @main_bp.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
     try:
         # Check MongoDB connection
-        current_app.config['MONGO_URI'] # Access config to ensure it's loaded
-        db.client.admin.command('ping')
+        db.admin.command('ping')
         mongo_status = "connected"
     except Exception as e:
         mongo_status = f"disconnected: {e}"
@@ -109,14 +115,18 @@ def manual_analysis():
 
             scraped_content = temp_article.text or temp_article.meta_description or temp_article.title
             scraped_title = temp_article.title
-            scraped_source = temp_article.meta_site_name or "Unknown"
-            if not scraped_source and temp_article.url:
+
+            # More robust source extraction
+            scraped_source = "Unknown"
+            if hasattr(temp_article, 'meta_site_name') and temp_article.meta_site_name:
+                scraped_source = temp_article.meta_site_name
+            elif temp_article.url:
                 try:
                     from urllib.parse import urlparse
                     parsed_url = urlparse(temp_article.url)
                     scraped_source = parsed_url.netloc.replace('www.', '')
                 except Exception:
-                    scraped_source = "Unknown"
+                    pass
 
             if not scraped_content or len(scraped_content) < 50:
                 return jsonify({"error": "Could not extract sufficient content from the provided URL (min 50 characters required)."}), 400

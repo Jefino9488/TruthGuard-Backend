@@ -1,14 +1,13 @@
-import os
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import logging
 import hashlib
 from newspaper import Article
 from sentence_transformers import SentenceTransformer
-import numpy as np
 from newsapi import NewsApiClient
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pymongo.errors import PyMongoError  # Import for MongoDB specific errors
+from pymongo.errors import PyMongoError
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +17,18 @@ TOPICS = ["misinformation", "fact checking", "media bias", "artificial intellige
 
 class NewsAPIFetcherTask:
     def __init__(self, db_client, api_key_news, model_path='all-MiniLM-L6-v2'):
+        if not db_client:
+            raise ValueError("Database client cannot be None")
+
         self.db = db_client
-        self.collection = self.db.articles
+        try:
+            # Test the connection and get the collection
+            self.db.command('ping')
+            self.collection = self.db.articles
+        except Exception as e:
+            logger.error(f"Failed to initialize database connection: {e}")
+            raise
+
         self.newsapi = NewsApiClient(api_key=api_key_news)
         logger.info(f"Loading sentence transformer model: {model_path}...")
         self.model = SentenceTransformer(model_path)
@@ -190,11 +199,11 @@ class NewsAPIFetcherTask:
                 "title": title,
                 "url": url,
                 "source": source_name,
-                "published_at": published_at_dt,  # Store as datetime object
+                "published_at": published_at_dt,
                 "content": content,
                 "description": description,
-                "scraped_at": datetime.utcnow(),
-                "processing_status": "pending",  # Initial status for AI analysis
+                "scraped_at": datetime.now(timezone.utc),
+                "processing_status": "pending",
                 "content_hash": hashlib.md5(content.encode()).hexdigest(),
                 "word_count": len(content.split()),
                 "content_embedding": content_embedding,  # Store embeddings for vector search
