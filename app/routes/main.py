@@ -34,9 +34,9 @@ def init_route_dependencies(app):
         if db is None:
             raise RuntimeError("Database connection not initialized")
 
-        # Test database connection
+        # Test database connection (using the proper database object)
         try:
-            db.admin.command('ping')
+            db.command('ping')  # Changed from db.admin.command to db.command
         except ConnectionFailure as e:
             app.logger.error(f"Failed to connect to MongoDB: {e}")
             raise RuntimeError(f"MongoDB connection failed: {e}")
@@ -66,7 +66,7 @@ def health_check():
         # Check MongoDB connection by using the global db object
         if not db:
             raise RuntimeError("Database not initialized")
-        db.admin.command('ping')
+        db.command('ping')  # Changed from db.admin.command to db.command
         mongo_status = "connected"
     except Exception as e:
         mongo_status = f"disconnected: {e}"
