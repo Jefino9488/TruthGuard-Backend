@@ -4,11 +4,7 @@ import sys
 import random
 from datetime import datetime, timezone
 import pymongo
-from google import genai
-from google.genai import types
-from google.genai import errors
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
+import google.generativeai as genai  # Updated import
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from pydantic import BaseModel, Field, ValidationError, ConfigDict
@@ -120,21 +116,30 @@ def clean_json_schema(schema: dict) -> dict:
 
 class GeminiAnalyzerTask:
     def __init__(self, db_client, api_key, model_path='all-MiniLM-L6-v2'):
-        if not db_client:
+        if db_client is None:
             raise ValueError("Database client cannot be None")
 
         self.db = db_client
         try:
             # Test the connection and get the collection
             self.db.command('ping')
-            self.collection = self.db.articles
+            self.collection = self.db.get_collection('articles')
         except Exception as e:
             logger.error(f"Failed to initialize database connection: {e}")
             raise
 
-        # Initialize Google AI
+        # Initialize Google AI with proper configuration
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+        # Use the correct model name and API version
+        self.model = genai.GenerativeModel(
+            'gemini-2.0-flash-001',  # Updated model name
+            generation_config={
+                "temperature": 0.4,
+                "top_p": 1,
+                "top_k": 32,
+                "max_output_tokens": 2048,
+            }
+        )
 
         # Initialize sentence transformer for embeddings
         logger.info(f"Loading sentence transformer model: {model_path}...")
@@ -143,27 +148,45 @@ class GeminiAnalyzerTask:
     def analyze_raw_content(self, title: str, content: str) -> dict:
         """Analyze the raw content without storing in the database."""
         try:
-            # Prepare the prompt
-            analysis_prompt = f"""
-            Please analyze the following article:
-            Title: {title}
-            Content: {content}
+            # Prepare the prompt with explicit JSON formatting instructions
+            analysis_prompt = f"""You are a specialized content analysis system. Analyze the following article and provide the results in valid JSON format.
+            
+Article to analyze:
+Title: {title}
+Content: {content}
 
-            Provide a comprehensive analysis in the following JSON structure:
-            {AnalysisResponse.schema_json(indent=2)}
+Instructions:
+1. Provide your analysis in strict JSON format
+2. Follow this exact schema (all scores must be between 0 and 1):
+{AnalysisResponse.schema_json(indent=2)}
 
-            Ensure all scores are between 0 and 1, and the response strictly follows the schema.
-            """
+IMPORTANT: Ensure your response is ONLY the JSON object, with no additional text before or after.
+"""
 
-            # Generate response from Gemini
-            response = self.model.generate_content(analysis_prompt)
+            # Generate response from Gemini with structured output preference
+            response = self.model.generate_content(
+                analysis_prompt,
+                generation_config={
+                    "temperature": 0.1,  # Lower temperature for more structured output
+                    "top_p": 0.8,
+                    "top_k": 20,
+                    "max_output_tokens": 2048,
+                }
+            )
 
             if not response.text:
                 raise ValueError("Empty response from Gemini")
 
-            # Parse the response
+            # Clean and parse the response
             try:
-                analysis_dict = json.loads(response.text)
+                # Clean the response text to ensure it's valid JSON
+                clean_text = response.text.strip()
+                if clean_text.startswith("```json"):
+                    clean_text = clean_text.replace("```json", "").replace("```", "").strip()
+                elif clean_text.startswith("```"):
+                    clean_text = clean_text.replace("```", "").strip()
+
+                analysis_dict = json.loads(clean_text)
                 analysis = AnalysisResponse(**analysis_dict)
 
                 # Generate embeddings
@@ -182,9 +205,11 @@ class GeminiAnalyzerTask:
                 return result
             except ValidationError as e:
                 logger.error(f"Failed to validate Gemini response: {e}")
+                logger.error(f"Raw response: {response.text}")
                 raise ValueError(f"Invalid analysis format: {e}")
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse Gemini response: {e}")
+                logger.error(f"Raw response: {response.text}")
                 raise ValueError(f"Invalid JSON response: {e}")
 
         except Exception as e:

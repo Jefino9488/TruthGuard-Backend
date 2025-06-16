@@ -296,6 +296,10 @@ class ArticleService:
         on 'content_embedding' or 'title_embedding' fields.
         """
         try:
+            # Convert numpy array to regular Python list if needed
+            if hasattr(query_embedding, 'tolist'):
+                query_embedding = query_embedding.tolist()
+
             pipeline = [
                 {
                     '$vectorSearch': {
@@ -324,13 +328,10 @@ class ArticleService:
             articles = list(self.articles_collection.aggregate(pipeline))
             logger.info(f"Performed vector search, found {len(articles)} results.")
             return {"articles": articles}
-        except PyMongoError as e:
-            logger.error(f"MongoDB Vector Search error: {e}")
+        except Exception as e:
+            logger.error(f"Error performing vector search: {e}")
             # Provide more specific guidance if it's an index error
             if "index not found" in str(e).lower() or "vector search" in str(e).lower():
                 return {
                     "error": f"MongoDB Atlas Vector Search failed. Ensure a vector index named 'vector_index' (or your custom name) is configured on your 'articles' collection on Atlas. Details: {e}"}
-            return {"error": str(e)}
-        except Exception as e:
-            logger.error(f"Error performing vector search: {e}", exc_info=True)
             return {"error": str(e)}
