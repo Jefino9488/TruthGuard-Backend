@@ -3,28 +3,59 @@ from flask import Blueprint, request, jsonify, current_app
 import threading
 import hashlib
 from newspaper import Article
-from urllib.parse import urlparse
 from pymongo.errors import PyMongoError
+import importlib
+from typing import Optional
 
 # Initialize the blueprint
 main_bp = Blueprint('main', __name__)
 
-# Initialize dependencies after app context is created
-def init_route_dependencies(app):
-    global article_service
-    from app import db
-    from app.tasks import NewsAPIFetcherTask, GeminiAnalyzerTask
-    from app.services import ArticleService
-    article_service = ArticleService(db)
+# Initialize variables that will be set up during init_route_dependencies
+article_service: Optional[object] = None  # Will be initialized as ArticleService
+db: Optional[object] = None  # Will be initialized as pymongo.database.Database
 
-# Rest of the code will be initialized when init_route_dependencies is called
-article_service = None
+def get_task_classes():
+    """Dynamically import task classes to avoid circular imports"""
+    tasks_module = importlib.import_module('app.tasks')
+    return (
+        getattr(tasks_module, 'NewsAPIFetcherTask'),
+        getattr(tasks_module, 'GeminiAnalyzerTask')
+    )
+
+def init_route_dependencies(app):
+    """Initialize dependencies after app context is created"""
+    global article_service, db
+
+    # Import and initialize database connection
+    app_module = importlib.import_module('app')
+    db = getattr(app_module, 'db')
+
+    if not db:
+        app.logger.error("Database connection not initialized")
+        raise RuntimeError("Database connection not initialized")
+
+    try:
+        # Test database connection
+        db.admin.command('ping')
+    except Exception as e:
+        app.logger.error(f"Failed to connect to database: {e}")
+        raise RuntimeError(f"Database connection failed: {e}")
+
+    # Import and initialize ArticleService
+    try:
+        ArticleService = importlib.import_module('app.services.article_service').ArticleService
+        article_service = ArticleService(db)
+    except Exception as e:
+        app.logger.error(f"Failed to initialize ArticleService: {e}")
+        raise
 
 @main_bp.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
     try:
-        # Check MongoDB connection
+        # Check MongoDB connection by using the global db object
+        if not db:
+            raise RuntimeError("Database not initialized")
         db.admin.command('ping')
         mongo_status = "connected"
     except Exception as e:
@@ -60,6 +91,7 @@ def trigger_scrape():
     """
     try:
         news_api_key = current_app.config['NEWS_API_KEY']
+        NewsAPIFetcherTask = get_task_classes()[0]
         scraper = NewsAPIFetcherTask(db, news_api_key)
 
         thread = threading.Thread(target=scraper.run_scraper)
@@ -79,6 +111,7 @@ def trigger_analysis():
     try:
         google_api_key = current_app.config['GOOGLE_API_KEY']
         batch_size = current_app.config['BATCH_SIZE_ANALYSIS']
+        GeminiAnalyzerTask = get_task_classes()[1]
         analyzer = GeminiAnalyzerTask(db, google_api_key)
 
         thread = threading.Thread(target=analyzer.run_analyzer, args=(batch_size,))
@@ -154,6 +187,7 @@ def manual_analysis():
             return jsonify({"error": "Please provide either 'url' OR 'headline' and 'content' for manual analysis."}), 400
 
         google_api_key = current_app.config['GOOGLE_API_KEY']
+        _, GeminiAnalyzerTask = get_task_classes()
         analyzer = GeminiAnalyzerTask(db, google_api_key)
 
         # Call the new raw content analysis method that returns embeddings
@@ -291,8 +325,9 @@ def vector_search_endpoint():
         return jsonify({"error": "Query 'q' is required for vector search."}), 400
 
     try:
-        # Initialize analyzer to get access to the embedding model
-        # Re-using the logic from trigger_analysis to ensure model is loaded
+        # Get the analyzer class dynamically
+        _, GeminiAnalyzerTask = get_task_classes()
+
         google_api_key = current_app.config['GOOGLE_API_KEY']
         analyzer_task_instance = GeminiAnalyzerTask(db, google_api_key)
 
