@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify, current_app
 import threading
 import hashlib
 from newspaper import Article
-from pymongo.errors import PyMongoError
+from pymongo.errors import PyMongoError, ConnectionFailure
 import importlib
 from typing import Optional
 
@@ -11,8 +11,8 @@ from typing import Optional
 main_bp = Blueprint('main', __name__)
 
 # Initialize variables that will be set up during init_route_dependencies
-article_service: Optional[object] = None  # Will be initialized as ArticleService
-db: Optional[object] = None  # Will be initialized as pymongo.database.Database
+article_service: Optional[object] = None
+db: Optional[object] = None
 
 def get_task_classes():
     """Dynamically import task classes to avoid circular imports"""
@@ -26,28 +26,38 @@ def init_route_dependencies(app):
     """Initialize dependencies after app context is created"""
     global article_service, db
 
-    # Import and initialize database connection
-    app_module = importlib.import_module('app')
-    db = getattr(app_module, 'db')
-
-    if not db:
-        app.logger.error("Database connection not initialized")
-        raise RuntimeError("Database connection not initialized")
-
     try:
+        # Use runtime imports to avoid circular dependencies
+        app_module = importlib.import_module('app')
+        db = getattr(app_module, 'db')
+
+        if db is None:
+            raise RuntimeError("Database connection not initialized")
+
         # Test database connection
-        db.admin.command('ping')
-    except Exception as e:
-        app.logger.error(f"Failed to connect to database: {e}")
-        raise RuntimeError(f"Database connection failed: {e}")
+        try:
+            db.admin.command('ping')
+        except ConnectionFailure as e:
+            app.logger.error(f"Failed to connect to MongoDB: {e}")
+            raise RuntimeError(f"MongoDB connection failed: {e}")
 
-    # Import and initialize ArticleService
-    try:
+        # Import and initialize ArticleService
         ArticleService = importlib.import_module('app.services.article_service').ArticleService
         article_service = ArticleService(db)
+
+        app.logger.info("Successfully initialized route dependencies")
+
     except Exception as e:
-        app.logger.error(f"Failed to initialize ArticleService: {e}")
+        app.logger.error(f"Failed to initialize route dependencies: {e}")
         raise
+
+@main_bp.before_request
+def check_dependencies():
+    """Ensure dependencies are available before handling requests"""
+    if db is None or article_service is None:
+        return jsonify({
+            "error": "Service initialization incomplete. Please try again in a few moments."
+        }), 503  # Service Unavailable
 
 @main_bp.route('/health', methods=['GET'])
 def health_check():
