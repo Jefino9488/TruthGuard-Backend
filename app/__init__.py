@@ -19,7 +19,8 @@ def init_db(app) -> bool:
         mongo_client = MongoClient(app.config['MONGO_URI'])
         # Test the connection explicitly
         mongo_client.admin.command('ping')
-        db = mongo_client.truthguard
+        # Explicitly get the database instance
+        db = mongo_client.get_database('truthguard')
         app.logger.info("Successfully connected to MongoDB")
         return True
 

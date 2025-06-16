@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 class ArticleService:
     def __init__(self, db_client):
         self.db = db_client
-        self.articles_collection = self.db.articles
+        # Use get_collection instead of attribute access
+        self.articles_collection = self.db.get_collection('articles')
 
     def get_all_articles(self, page=1, limit=10, sort_by="published_at", sort_order="desc"):
         """
