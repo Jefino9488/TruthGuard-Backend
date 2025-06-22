@@ -355,3 +355,78 @@ def vector_search_endpoint():
     except Exception as e:
         current_app.logger.error(f"Error during vector search: {e}", exc_info=True)
         return jsonify({"success": False, "error": "An error occurred during vector search.", "details": str(e)}), 500
+
+@main_bp.route('/media-landscape', methods=['GET'])
+def media_landscape_endpoint():
+    """
+    API endpoint to retrieve data for the media landscape visualization (bubble chart).
+    Returns information about media sources with their bias, reliability, and reach.
+    """
+    try:
+        result = article_service.get_media_landscape_data()
+
+        if "error" in result:
+            return jsonify({"success": False, "error": result["error"]}), 500
+
+        return jsonify({
+            "success": True, 
+            "data": result["sources"],
+            "generatedAt": datetime.now(timezone.utc).isoformat()
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f"Error retrieving media landscape data: {e}", exc_info=True)
+        return jsonify({
+            "success": False, 
+            "error": "An error occurred while retrieving media landscape data.", 
+            "details": str(e)
+        }), 500
+
+@main_bp.route('/topic-clusters', methods=['GET'])
+def topic_clusters_endpoint():
+    """
+    API endpoint to retrieve data for the topic clusters visualization (force-directed graph).
+    Returns information about topics and their relationships.
+    """
+    try:
+        result = article_service.get_topic_clusters_data()
+
+        if "error" in result:
+            return jsonify({"success": False, "error": result["error"]}), 500
+
+        return jsonify({
+            "success": True, 
+            "data": result,
+            "generatedAt": datetime.now(timezone.utc).isoformat()
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f"Error retrieving topic clusters data: {e}", exc_info=True)
+        return jsonify({
+            "success": False, 
+            "error": "An error occurred while retrieving topic clusters data.", 
+            "details": str(e)
+        }), 500
+
+@main_bp.route('/narrative-flow', methods=['GET'])
+def narrative_flow_endpoint():
+    """
+    API endpoint to retrieve data for the narrative flow visualization (Sankey diagram).
+    Returns information about how narratives evolve across different stages.
+    """
+    try:
+        result = article_service.get_narrative_flow_data()
+
+        if "error" in result:
+            return jsonify({"success": False, "error": result["error"]}), 500
+
+        return jsonify({
+            "success": True, 
+            "data": result,
+            "generatedAt": datetime.now(timezone.utc).isoformat()
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f"Error retrieving narrative flow data: {e}", exc_info=True)
+        return jsonify({
+            "success": False, 
+            "error": "An error occurred while retrieving narrative flow data.", 
+            "details": str(e)
+        }), 500

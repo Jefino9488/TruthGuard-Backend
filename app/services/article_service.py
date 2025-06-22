@@ -335,3 +335,298 @@ class ArticleService:
                 return {
                     "error": f"MongoDB Atlas Vector Search failed. Ensure a vector index named 'vector_index' (or your custom name) is configured on your 'articles' collection on Atlas. Details: {e}"}
             return {"error": str(e)}
+
+    def get_media_landscape_data(self):
+        """
+        Retrieves data for the media landscape visualization (bubble chart).
+        Returns information about media sources with their bias, reliability, and reach.
+        """
+        try:
+            pipeline = [
+                {
+                    '$group': {
+                        '_id': '$source',
+                        'articleCount': {'$sum': 1},
+                        'bias': {'$avg': '$bias_score'},
+                        'reliability': {'$avg': '$credibility_score'},
+                        'misinformationRisk': {'$avg': '$misinformation_risk'}
+                    }
+                },
+                {
+                    '$project': {
+                        'name': '$_id',
+                        'bias': 1,
+                        'reliability': 1,
+                        'reach': {
+                            '$multiply': [
+                                '$articleCount',
+                                {'$divide': [1, {'$max': [1, {'$sqrt': '$articleCount'}]}]}
+                            ]
+                        },
+                        'category': {
+                            '$cond': {
+                                'if': {'$regexMatch': {'input': {'$toLower': '$_id'}, 'regex': 'tv|cnn|fox|msnbc|bbc'}},
+                                'then': 'TV',
+                                'else': {
+                                    '$cond': {
+                                        'if': {'$regexMatch': {'input': {'$toLower': '$_id'}, 'regex': 'times|post|journal|guardian|economist'}},
+                                        'then': 'Print',
+                                        'else': {
+                                            '$cond': {
+                                                'if': {'$regexMatch': {'input': {'$toLower': '$_id'}, 'regex': 'reuters|ap|associated press'}},
+                                                'then': 'Wire',
+                                                'else': {
+                                                    '$cond': {
+                                                        'if': {'$regexMatch': {'input': {'$toLower': '$_id'}, 'regex': 'npr|radio|bbc'}},
+                                                        'then': 'Radio',
+                                                        'else': 'Online'
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        'articleCount': 1,
+                        'misinformationRisk': 1
+                    }
+                },
+                {'$sort': {'articleCount': -1}},
+                {'$limit': 30}  # Limit to top 30 sources by article count
+            ]
+
+            result = list(self.articles_collection.aggregate(pipeline))
+            logger.info(f"Retrieved media landscape data for {len(result)} sources.")
+            return {"sources": result}
+        except PyMongoError as e:
+            logger.error(f"MongoDB error getting media landscape data: {e}")
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Error getting media landscape data: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    def get_topic_clusters_data(self):
+        """
+        Retrieves data for the topic clusters visualization (force-directed graph).
+        Returns information about topics and their relationships.
+        """
+        try:
+            # First, get the most common topics/categories
+            topics_pipeline = [
+                {
+                    '$group': {
+                        '_id': '$category',
+                        'count': {'$sum': 1},
+                        'avgBias': {'$avg': '$bias_score'},
+                        'avgMisinformationRisk': {'$avg': '$misinformation_risk'}
+                    }
+                },
+                {'$match': {'_id': {'$ne': None}}},  # Filter out null categories
+                {'$sort': {'count': -1}},
+                {'$limit': 20}  # Top 20 topics
+            ]
+
+            topics = list(self.articles_collection.aggregate(topics_pipeline))
+
+            # Create nodes from topics
+            nodes = []
+            for i, topic in enumerate(topics):
+                if topic['_id'] is not None:
+                    # Assign group based on bias level
+                    group = 1
+                    if 'avgBias' in topic and topic['avgBias'] is not None:
+                        if topic['avgBias'] < 0.2:
+                            group = 1
+                        elif topic['avgBias'] < 0.4:
+                            group = 2
+                        elif topic['avgBias'] < 0.6:
+                            group = 3
+                        elif topic['avgBias'] < 0.8:
+                            group = 4
+                        else:
+                            group = 5
+
+                    nodes.append({
+                        'id': topic['_id'],
+                        'group': group,
+                        'value': max(10, min(30, topic['count'] / 2))  # Scale node size between 10-30
+                    })
+
+            # Create links between topics based on co-occurrence
+            links = []
+            topic_ids = [topic['_id'] for topic in topics if topic['_id'] is not None]
+
+            # For each pair of topics, find articles that mention both
+            for i in range(len(topic_ids)):
+                for j in range(i+1, len(topic_ids)):
+                    topic1 = topic_ids[i]
+                    topic2 = topic_ids[j]
+
+                    # Simple heuristic for link strength based on topic similarity
+                    # In a real implementation, you would analyze actual co-occurrence in articles
+                    similarity_score = 0
+
+                    # Find articles with related topics or keywords
+                    related_pipeline = [
+                        {
+                            '$match': {
+                                '$or': [
+                                    {'category': topic1, 'ai_analysis.keywords': {'$regex': topic2, '$options': 'i'}},
+                                    {'category': topic2, 'ai_analysis.keywords': {'$regex': topic1, '$options': 'i'}}
+                                ]
+                            }
+                        },
+                        {'$count': 'related_count'}
+                    ]
+
+                    related_result = list(self.articles_collection.aggregate(related_pipeline))
+                    if related_result and 'related_count' in related_result[0]:
+                        similarity_score = min(10, max(1, related_result[0]['related_count'] / 2))
+                    else:
+                        # If no direct relationship found, use a small default value
+                        # based on general topic relatedness
+                        if (topic1 in ['Politics', 'Economy', 'Policy'] and 
+                            topic2 in ['Politics', 'Economy', 'Policy']):
+                            similarity_score = 5
+                        elif (topic1 in ['Climate', 'Environment', 'Energy'] and 
+                              topic2 in ['Climate', 'Environment', 'Energy']):
+                            similarity_score = 6
+                        elif (topic1 in ['Technology', 'AI', 'Social Media'] and 
+                              topic2 in ['Technology', 'AI', 'Social Media']):
+                            similarity_score = 7
+                        elif (topic1 in ['Healthcare', 'Pandemic'] and 
+                              topic2 in ['Healthcare', 'Pandemic']):
+                            similarity_score = 8
+                        else:
+                            similarity_score = 2
+
+                    if similarity_score > 0:
+                        links.append({
+                            'source': topic1,
+                            'target': topic2,
+                            'value': similarity_score
+                        })
+
+            return {
+                "nodes": nodes,
+                "links": links
+            }
+        except PyMongoError as e:
+            logger.error(f"MongoDB error getting topic clusters data: {e}")
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Error getting topic clusters data: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    def get_narrative_flow_data(self):
+        """
+        Retrieves data for the narrative flow visualization (Sankey diagram).
+        Returns information about how narratives evolve across different stages.
+        """
+        try:
+            # Get the most recent articles for analysis
+            recent_articles_pipeline = [
+                {'$sort': {'published_at': -1}},
+                {'$limit': 100},
+                {
+                    '$project': {
+                        'title': 1,
+                        'source': 1,
+                        'category': 1,
+                        'bias_score': 1,
+                        'misinformation_risk': 1,
+                        'ai_analysis': 1
+                    }
+                }
+            ]
+
+            recent_articles = list(self.articles_collection.aggregate(recent_articles_pipeline))
+
+            # Define narrative stages
+            stages = [
+                "Initial Report", 
+                "Economic Impact", 
+                "Political Response", 
+                "Public Reaction", 
+                "Expert Analysis",
+                "Policy Proposal",
+                "Market Response",
+                "Social Media",
+                "Opposition View",
+                "International Perspective",
+                "Historical Context",
+                "Future Implications"
+            ]
+
+            # Create nodes for each stage
+            nodes = []
+            for i, stage in enumerate(stages):
+                group = (i % 6) + 1  # Assign group (1-6) based on stage index
+                nodes.append({
+                    "id": stage,
+                    "group": group
+                })
+
+            # Create links between stages based on article analysis
+            links = []
+
+            # Define some common flows between narrative stages
+            common_flows = [
+                ("Initial Report", "Economic Impact", 5),
+                ("Initial Report", "Political Response", 8),
+                ("Initial Report", "Public Reaction", 6),
+                ("Economic Impact", "Market Response", 7),
+                ("Economic Impact", "Expert Analysis", 4),
+                ("Political Response", "Policy Proposal", 6),
+                ("Political Response", "Opposition View", 5),
+                ("Public Reaction", "Social Media", 9),
+                ("Expert Analysis", "Future Implications", 5),
+                ("Expert Analysis", "Historical Context", 4),
+                ("Policy Proposal", "Future Implications", 3),
+                ("Policy Proposal", "International Perspective", 2),
+                ("Opposition View", "Public Reaction", 4),
+                ("Social Media", "Opposition View", 3),
+                ("Market Response", "Future Implications", 4)
+            ]
+
+            # Add common flows to links
+            for source, target, value in common_flows:
+                links.append({
+                    "source": source,
+                    "target": target,
+                    "value": value
+                })
+
+            # Analyze articles to enhance the narrative flow
+            # This is a simplified approach; a real implementation would use more sophisticated NLP
+            for article in recent_articles:
+                if 'ai_analysis' in article and article['ai_analysis']:
+                    # Use AI analysis to determine narrative stages
+                    analysis = article['ai_analysis']
+
+                    # Example: If article has high economic focus, strengthen economic flows
+                    if 'economic' in str(analysis).lower() or article.get('category') == 'Economy':
+                        for i, (source, target, _) in enumerate(common_flows):
+                            if source == "Economic Impact" or target == "Economic Impact" or \
+                               source == "Market Response" or target == "Market Response":
+                                links[i]["value"] += 1
+
+                    # Example: If article has high political focus, strengthen political flows
+                    if 'political' in str(analysis).lower() or article.get('category') == 'Politics':
+                        for i, (source, target, _) in enumerate(common_flows):
+                            if source == "Political Response" or target == "Political Response" or \
+                               source == "Policy Proposal" or target == "Policy Proposal" or \
+                               source == "Opposition View" or target == "Opposition View":
+                                links[i]["value"] += 1
+
+            return {
+                "nodes": nodes,
+                "links": links
+            }
+        except PyMongoError as e:
+            logger.error(f"MongoDB error getting narrative flow data: {e}")
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Error getting narrative flow data: {e}", exc_info=True)
+            return {"error": str(e)}
