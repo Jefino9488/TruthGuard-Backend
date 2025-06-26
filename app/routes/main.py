@@ -100,18 +100,55 @@ def trigger_scrape():
     API endpoint to trigger the news scraping task.
     """
     try:
-        news_api_key = current_app.config['NEWS_API_KEY']
-        NewsAPIFetcherTask = get_task_classes()[0]
-        scraper = NewsAPIFetcherTask(db, news_api_key)
+        # Get database instance
+        from backend.app.database import Database
+        db_instance = Database.get_instance()
+        sync_db = db_instance.get_sync_db()
 
-        thread = threading.Thread(target=scraper.run_scraper)
-        thread.daemon = True # Allow main program to exit even if thread is running
+        if sync_db is None:
+            return jsonify({
+                "error": "Database connection not initialized"
+            }), 503
+
+        # Test database connection explicitly
+        try:
+            sync_db.command('ping')
+        except Exception as e:
+            current_app.logger.error(f"Database connection error: {e}")
+            return jsonify({
+                "error": f"Database connection error: {str(e)}"
+            }), 503
+
+        # Get task classes
+        NewsAPIFetcherTask, GeminiAnalyzerTask = get_task_classes()
+
+        # Initialize and start the fetcher task
+        fetcher = NewsAPIFetcherTask()
+        analyzer = GeminiAnalyzerTask()
+
+        def run_tasks():
+            try:
+                articles = fetcher.execute()
+                if articles:
+                    analyzer.execute(articles)
+            except Exception as e:
+                current_app.logger.error(f"Error in scraping task: {e}")
+
+        # Start tasks in background thread
+        thread = threading.Thread(target=run_tasks)
         thread.start()
 
-        return jsonify({"message": "News scraping initiated successfully!", "status": "processing"}), 202
+        return jsonify({
+            "success": True,
+            "message": "Scraping task started successfully",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
     except Exception as e:
-        current_app.logger.error(f"Error triggering scraping: {e}")
-        return jsonify({"error": "Failed to initiate scraping task", "details": str(e)}), 500
+        current_app.logger.error(f"Error triggering scrape: {e}")
+        return jsonify({
+            "error": f"Error triggering scraping: {str(e)}"
+        }), 500
 
 @main_bp.route('/analyze', methods=['POST'])
 def trigger_analysis():
